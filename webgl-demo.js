@@ -69,7 +69,7 @@ function main() {
   // Here's where we call the routine that builds all the
   // objects we'll be drawing.
   const buffers = initBuffers(gl);
-  const texture = loadTexture(gl, 'cloud.png');
+  const texture = loadTexture(gl, 'cloud10.png');
 
   var then = 0;
 
