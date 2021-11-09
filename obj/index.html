@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title></title>
+</head>
+
+<body>
+  <!--通过canvas标签创建一个800px*800px大小的画布-->
+  <canvas id="webgl" width="800" height="800"></canvas>
+  <script type="text/javascript" src="./cuon-matrix.js"></script>
+  <script>
+    //顶点着色器
+    var VSHADER_SOURCE = '' +
+      'attribute vec4 a_Position;\n' + //声明attribute变量a_Position，用来存放顶点位置信息
+      'attribute vec4 a_Color;\n' + //声明attribute变量a_Color，用来存放顶点颜色信息
+      'attribute vec4 a_Normal;\n' + //声明attribute变量a_Normal，用来存放法向量
+      'uniform mat4 u_MvpMatrix;\n' + //声明uniform变量u_MvpMatrix，用来存放模型视图投影组合矩阵
+      'uniform mat4 u_NormalMatrix;\n' + //声明uniform变量u_NormalMatrix，用来存放变换法向量矩阵
+      'varying vec4 v_Color;\n' + //声明varying变量v_Color，用来向片元着色器传值顶点颜色信息
+      'void main(){\n' +
+      '  vec3 lightDirection = vec3(-0.35, 0.35, 0.87);\n' + //声明存放光线方向的变量
+      '  gl_Position = u_MvpMatrix * a_Position;\n' + //将模型视图投影组合矩阵与顶点坐标相乘赋值给顶点着色器内置变量gl_Position
+      '  vec3 normal = normalize(vec3(u_NormalMatrix * a_Normal));\n' + //计算变换后的法向量并归一化处理
+      '  float nDotL = max(dot(normal, lightDirection), 0.0);\n' + //计算光线方向和法向量点积
+      '  v_Color = vec4(a_Color.rgb * nDotL, a_Color.a);\n' + //计算漫反射光的颜色传给片元着色器
+      '}\n'
+
+    //片元着色器
+    var FSHADER_SOURCE = '' +
+      '#ifdef GL_ES\n' +
+      ' precision mediump float;\n' + // 设置精度
+      '#endif\n' +
+      'varying vec4 v_Color;\n' + //声明varying变量v_Color，用来接收顶点着色器传送的片元颜色信息
+      'void main(){\n' +
+      '  gl_FragColor = v_Color;\n' + //将顶点着色器传送的片元颜色赋值给内置变量gl_FragColor
+      '}\n'
+
+    //创建程序对象
+    function createProgram(gl, vshader, fshader) {
+      //创建顶点着色器对象
+      var vertexShader = loadShader(gl, gl.VERTEX_SHADER, vshader)
+      //创建片元着色器对象
+      var fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fshader)
+
+      if (!vertexShader || !fragmentShader) {
+        return null
+      }
+
+      //创建程序对象program
+      var program = gl.createProgram()
+      if (!gl.createProgram()) {
+        return null
+      }
+      //分配顶点着色器和片元着色器到program
+      gl.attachShader(program, vertexShader)
+      gl.attachShader(program, fragmentShader)
+      //链接program
+      gl.linkProgram(program)
+
+      //检查程序对象是否连接成功
+      var linked = gl.getProgramParameter(program, gl.LINK_STATUS)
+      if (!linked) {
+        var error = gl.getProgramInfoLog(program)
+        console.log('程序对象连接失败: ' + error)
+        gl.deleteProgram(program)
+        gl.deleteShader(fragmentShader)
+        gl.deleteShader(vertexShader)
+        return null
+      }
+      //使用program
+      gl.useProgram(program)
+      gl.program = program
+      //返回程序program对象
+      return program
+    }
+
+    function loadShader(gl, type, source) {
+      // 创建顶点着色器对象
+      var shader = gl.createShader(type)
+      if (shader == null) {
+        console.log('创建着色器失败')
+        return null
+      }
+
+      // 引入着色器源代码
+      gl.shaderSource(shader, source)
+
+      // 编译着色器
+      gl.compileShader(shader)
+
+      // 检查顶是否编译成功
+      var compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS)
+      if (!compiled) {
+        var error = gl.getShaderInfoLog(shader)
+        console.log('编译着色器失败: ' + error)
+        gl.deleteShader(shader)
+        return null
+      }
+
+      return shader
+    }
+
+    function init() {
+      //通过getElementById()方法获取canvas画布
+      var canvas = document.getElementById('webgl')
+
+      //通过方法getContext()获取WebGL上下文
+      var gl = canvas.getContext('webgl')
+
+      //初始化着色器
+      var program = createProgram(gl, VSHADER_SOURCE, FSHADER_SOURCE) //创建绘制单色立方体的程序对象
+      if (!program) {
+        console.log('初始化着色器失败')
+        return
+      }
+
+      // 设置canvas的背景色
+      gl.clearColor(0.2, 0.2, 0.2, 1)
+
+      //开启隐藏面消除
+      gl.enable(gl.DEPTH_TEST)
+
+      //获取绘制图形相关变量的存储地址
+      program.a_Position = gl.getAttribLocation(program, 'a_Position') //顶点坐标
+      program.a_Color = gl.getAttribLocation(program, 'a_Color') //顶点颜色
+      program.a_Normal = gl.getAttribLocation(program, 'a_Normal') //顶点法向量
+      program.u_MvpMatrix = gl.getUniformLocation(program, 'u_MvpMatrix') //模型视图投影矩阵
+      program.u_NormalMatrix = gl.getUniformLocation(program, 'u_NormalMatrix') //变换法向量矩阵
+
+      if (
+        program.a_Position < 0 ||
+        program.a_Color < 0 ||
+        program.a_Normal < 0 ||
+        !program.u_MvpMatrix ||
+        !program.u_NormalMatrix
+      ) {
+        console.log('获取attribute变量或uniform变量存储地址失败')
+        return
+      }
+
+      //创建缓冲区对象，存放绘制所需要的变量
+      var model = initVertexBuffers(gl, program)
+      if (!model) {
+        console.log('初始化单色立方体顶点信息失败')
+        return
+      }
+      //创建、设置视图投影矩阵
+      var viewProjMatrix = new Matrix4()
+      viewProjMatrix.setPerspective(30, 1, 1, 5000)
+      viewProjMatrix.lookAt(0.0, 500.0, 200.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+
+      //读取OBJ文件
+      readOBJFile('./SHAN.obj', gl, model, 60, true)
+
+      var currentAngle = 0.0
+      var tick = function () {
+        currentAngle = getCurrentAngle(currentAngle) //获取当前要旋转的角度    
+        draw(gl, program, currentAngle, viewProjMatrix, model) //绘图
+        requestAnimationFrame(tick)
+      }
+
+      tick() // 调用tick
+    }
+
+    var g_LastTime = Date.now() // 上次绘制的时间
+    var ANGLE_SET = 30.0 // 旋转速度（度/秒）
+    function getCurrentAngle(angle) {
+      var now = Date.now()
+      var elapsed = now - g_LastTime //上次调用与当前时间差
+      g_LastTime = now
+      var newAngle = angle + (ANGLE_SET * elapsed) / 1000
+      return (newAngle %= 360)
+    }
+
+    //创建一个对象存放绘制需要的绑定在缓冲区对象的变量
+    function initVertexBuffers(gl, program) {
+      var o = new Object()
+      o.vertexBuffer = createEmptyArrayBuffer(gl, program.a_Position, 3, gl.FLOAT)
+      o.normalBuffer = createEmptyArrayBuffer(gl, program.a_Normal, 3, gl.FLOAT)
+      o.colorBuffer = createEmptyArrayBuffer(gl, program.a_Color, 4, gl.FLOAT)
+      o.indexBuffer = gl.createBuffer()
+      if (!o.vertexBuffer || !o.normalBuffer || !o.colorBuffer || !o.indexBuffer) {
+        return null
+      }
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, null)
+
+      return o
+    }
+
+    //为变量创建缓冲区对象、分配缓存并开启
+    function createEmptyArrayBuffer(gl, a_attribute, num, type) {
+      var buffer = gl.createBuffer() //创建缓冲区对象
+      if (!buffer) {
+        console.log('创建缓冲区对象失败')
+        return null
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer) //将buffer绑定到缓冲区对象
+      gl.vertexAttribPointer(a_attribute, num, type, false, 0, 0) //缓冲区对象分配给a_attribute指定的地址
+      gl.enableVertexAttribArray(a_attribute) //开启a_attribute指定的变量
+
+      return buffer
+    }
+
+    function readOBJFile(fileName, gl, model, scale, reverse) {
+      var request = new XMLHttpRequest()
+
+      request.onreadystatechange = function () {
+        if (request.readyState === 4 && request.status !== 404) {
+          onReadOBJFile(request.responseText, fileName, gl, model, scale, reverse)
+        }
+      }
+      request.open('GET', fileName, true) //创建请求
+      request.send() //发送请求
+    }
+
+    var g_objDoc = null //OBJ文件信息
+    var g_drawingInfo = null //绘制三维模型信息
+
+    //文件读取完成处理
+    function onReadOBJFile(fileString, fileName, gl, o, scale, reverse) {
+      var objDoc = new OBJDoc(fileName) //创建OBJDoc对象
+      var result = objDoc.parse(fileString, scale, reverse) //解析文件
+      if (!result) {
+        g_objDoc = null
+        g_drawingInfo = null
+        console.log('OBJ文件解析失败')
+        return
+      }
+      g_objDoc = objDoc //解析成功赋值给全局变量g_objDoc
+    }
+
+    //模型矩阵、模型视图投影矩阵、法向量矩阵
+    var g_modelMatrix = new Matrix4()
+    var g_mvpMatrix = new Matrix4()
+    var g_normalMatrix = new Matrix4()
+
+    //绘制函数
+    function draw(gl, program, angle, viewProjMatrix, model) {
+      // OBJ和MTL文件解析完成
+      if (g_objDoc != null && g_objDoc.isMTLComplete()) {
+        g_drawingInfo = onReadComplete(gl, model, g_objDoc)
+        g_objDoc = null
+      }
+      if (!g_drawingInfo) return //文件解析未完成返回
+
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT) //清空颜色和深度缓冲区
+
+      //计算模型矩阵
+      g_modelMatrix.setRotate(angle, 1.0, 0.0, 0.0)
+      g_modelMatrix.rotate(angle, 0.0, 1.0, 0.0)
+      g_modelMatrix.rotate(angle, 0.0, 0.0, 1.0)
+
+      //根据模型矩阵计算变换法向量的矩阵并传值
+      g_normalMatrix.setInverseOf(g_modelMatrix)
+      g_normalMatrix.transpose()
+      gl.uniformMatrix4fv(program.u_NormalMatrix, false, g_normalMatrix.elements)
+
+      //计算模型视图投影矩阵并传值
+      g_mvpMatrix.set(viewProjMatrix)
+      g_mvpMatrix.multiply(g_modelMatrix)
+      gl.uniformMatrix4fv(program.u_MvpMatrix, false, g_mvpMatrix.elements)
+
+      //绘制
+      gl.drawElements(
+        gl.TRIANGLES,
+        g_drawingInfo.indices.length,
+        gl.UNSIGNED_SHORT,
+        0
+      )
+    }
+
+    // OBJ文件读取并解析
+    function onReadComplete(gl, model, objDoc) {
+      //从OBJ文件中读取顶点坐标、颜色、法线、索引等用于绘图的信息
+      var drawingInfo = objDoc.getDrawingInfo()
+
+      //顶点坐标、颜色、法线写入缓冲区对象
+      gl.bindBuffer(gl.ARRAY_BUFFER, model.vertexBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, drawingInfo.vertices, gl.STATIC_DRAW)
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, model.normalBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, drawingInfo.normals, gl.STATIC_DRAW)
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, model.colorBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, drawingInfo.colors, gl.STATIC_DRAW)
+
+      //顶点索引写入缓冲区对象
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, model.indexBuffer)
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, drawingInfo.indices, gl.STATIC_DRAW)
+
+      return drawingInfo
+    }
+
+    // OBJDoc 对象构造函数
+    var OBJDoc = function (fileName) {
+      this.fileName = fileName
+      this.mtls = new Array(0) //MTL材质列表
+      this.objects = new Array(0) //Obj对象列表
+      this.vertices = new Array(0) //顶点列表
+      this.normals = new Array(0) //法线列表
+    }
+
+    // 解析OBJ文件中的文本
+    OBJDoc.prototype.parse = function (fileString, scale, reverse) {
+      var lines = fileString.split('\n') //根据换行符拆分成数组
+      lines.push(null) //添加结束标识
+      var index = 0 //初始化当前行索引
+
+      var currentObject = null
+      var currentMaterialName = ''
+      // 按行解析
+      var line //接收当前文本行内容
+      var sp = new StringParser() // 创建StringParser对象
+      while ((line = lines[index++]) != null) {
+        sp.init(line) //初始化sp
+        var command = sp.getWord() //获取指令名
+        if (command == null) continue //判空处理
+
+        switch (command) {
+          case '#':
+            continue //注释跳过
+          case 'mtllib': //读取材质文件
+            var path = this.parseMtllib(sp, this.fileName)
+            var mtl = new MTLDoc() //创建MTLDoc对象
+            this.mtls.push(mtl)
+            var request = new XMLHttpRequest()
+            request.onreadystatechange = function () {
+              if (request.readyState == 4) {
+                if (request.status != 404) {
+                  onReadMTLFile(request.responseText, mtl)
+                } else {
+                  mtl.complete = true
+                }
+              }
+            }
+            request.open('GET', path, true) //创建请求
+            request.send() //发送请求
+            continue //继续解析
+          case 'o':
+          case 'g': //读取对象名
+            var object = this.parseObjectName(sp)
+            this.objects.push(object)
+            currentObject = object
+            continue
+          case 'v': //读取顶点
+            var vertex = this.parseVertex(sp, scale)
+            this.vertices.push(vertex)
+            continue
+          case 'vn': //读取法线
+            var normal = this.parseNormal(sp)
+            this.normals.push(normal)
+            continue
+          case 'usemtl': //读取材质名
+            currentMaterialName = this.parseUsemtl(sp)
+            continue
+          case 'f': //读取表面
+            var face = this.parseFace(
+              sp,
+              currentMaterialName,
+              this.vertices,
+              reverse
+            )
+            currentObject.addFace(face)
+            continue //继续解析
+        }
+      }
+
+      return true
+    }
+
+    OBJDoc.prototype.parseMtllib = function (sp, fileName) {
+      var i = fileName.lastIndexOf('/')
+      var dirPath = ''
+      if (i > 0) dirPath = fileName.substr(0, i + 1)
+
+      return dirPath + sp.getWord()
+    }
+
+    OBJDoc.prototype.parseObjectName = function (sp) {
+      var name = sp.getWord()
+      return new OBJObject(name)
+    }
+
+    OBJDoc.prototype.parseVertex = function (sp, scale) {
+      var x = sp.getFloat() * scale
+      var y = sp.getFloat() * scale
+      var z = sp.getFloat() * scale
+      return new Vertex(x, y, z)
+    }
+
+    OBJDoc.prototype.parseNormal = function (sp) {
+      var x = sp.getFloat()
+      var y = sp.getFloat()
+      var z = sp.getFloat()
+      return new Normal(x, y, z)
+    }
+
+    OBJDoc.prototype.parseUsemtl = function (sp) {
+      return sp.getWord()
+    }
+
+    OBJDoc.prototype.parseFace = function (sp, materialName, vertices, reverse) {
+      var face = new Face(materialName)
+      //获取索引
+      for (;;) {
+        var word = sp.getWord()
+        if (word == null) break
+        var subWords = word.split('/')
+        if (subWords.length >= 1) {
+          var vi = parseInt(subWords[0]) - 1
+          face.vIndices.push(vi)
+        }
+        if (subWords.length >= 3) {
+          var ni = parseInt(subWords[2]) - 1
+          face.nIndices.push(ni)
+        } else {
+          face.nIndices.push(-1)
+        }
+      }
+
+      //计算法向量
+      var v0 = [
+        vertices[face.vIndices[0]].x,
+        vertices[face.vIndices[0]].y,
+        vertices[face.vIndices[0]].z
+      ]
+      var v1 = [
+        vertices[face.vIndices[1]].x,
+        vertices[face.vIndices[1]].y,
+        vertices[face.vIndices[1]].z
+      ]
+      var v2 = [
+        vertices[face.vIndices[2]].x,
+        vertices[face.vIndices[2]].y,
+        vertices[face.vIndices[2]].z
+      ]
+
+      //根据面上的三个点计算面的法线
+      var normal = calcNormal(v0, v1, v2)
+      //前三个点计算法线为空，重新计算
+      if (normal == null) {
+        if (face.vIndices.length >= 4) {
+          //面上顶点数大于4，取第二三四个顶点计算法线
+          var v3 = [
+            vertices[face.vIndices[3]].x,
+            vertices[face.vIndices[3]].y,
+            vertices[face.vIndices[3]].z
+          ]
+          normal = calcNormal(v1, v2, v3)
+        }
+        if (normal == null) {
+          //法线为空没有四个以上顶点取Y轴反向单位向量作为法线
+          normal = [0.0, 1.0, 0.0]
+        }
+      }
+      if (reverse) {
+        normal[0] = -normal[0]
+        normal[1] = -normal[1]
+        normal[2] = -normal[2]
+      }
+      face.normal = new Normal(normal[0], normal[1], normal[2])
+
+      // 面上顶点数大于3，拆分为三角形
+      if (face.vIndices.length > 3) {
+        var n = face.vIndices.length - 2
+        var newVIndices = new Array(n * 3)
+        var newNIndices = new Array(n * 3)
+        for (var i = 0; i < n; i++) {
+          newVIndices[i * 3 + 0] = face.vIndices[0]
+          newVIndices[i * 3 + 1] = face.vIndices[i + 1]
+          newVIndices[i * 3 + 2] = face.vIndices[i + 2]
+          newNIndices[i * 3 + 0] = face.nIndices[0]
+          newNIndices[i * 3 + 1] = face.nIndices[i + 1]
+          newNIndices[i * 3 + 2] = face.nIndices[i + 2]
+        }
+        face.vIndices = newVIndices
+        face.nIndices = newNIndices
+      }
+      face.numIndices = face.vIndices.length
+
+      return face
+    }
+
+    // 解析材质文件
+    function onReadMTLFile(fileString, mtl) {
+      var lines = fileString.split('\n') //根据换行符拆分成数组
+      lines.push(null) //添加结束标识
+      var index = 0 // 初始化当前行索引
+
+      // 按行解析
+      var line //接收当前文本行内容
+      var name = '' //接收当前材质名称
+      var sp = new StringParser() //创建StringParser对象
+      while ((line = lines[index++]) != null) {
+        sp.init(line) //初始化sp
+        var command = sp.getWord() // 获取指令名
+        if (command == null) continue //判空处理
+
+        switch (command) {
+          case '#':
+            continue //注释跳过
+          case 'newmtl': //读取材质文件
+            name = mtl.parseNewmtl(sp) //获取材质名称
+            continue //继续解析
+          case 'Kd': //读取法线
+            if (name == '') continue //name为空继续读取
+            var material = mtl.parseRGB(sp, name)
+            mtl.materials.push(material)
+            name = ''
+            continue //继续读取
+        }
+      }
+      mtl.complete = true
+    }
+
+    //材质检查
+    OBJDoc.prototype.isMTLComplete = function () {
+      if (this.mtls.length == 0) return true
+      for (var i = 0; i < this.mtls.length; i++) {
+        if (!this.mtls[i].complete) return false
+      }
+      return true
+    }
+
+    //根据材质名查找颜色
+    OBJDoc.prototype.findColor = function (name) {
+      for (var i = 0; i < this.mtls.length; i++) {
+        for (var j = 0; j < this.mtls[i].materials.length; j++) {
+          if (this.mtls[i].materials[j].name == name) {
+            return this.mtls[i].materials[j].color
+          }
+        }
+      }
+      return new Color(0.8, 0.8, 0.8, 1)
+    }
+
+    //获取将要绘制三维模型的信息
+    OBJDoc.prototype.getDrawingInfo = function () {
+      //创建存放顶点坐标、法线、颜色和索引的数组
+      var numIndices = 0
+      for (var i = 0; i < this.objects.length; i++) {
+        numIndices += this.objects[i].numIndices
+      }
+      var numVertices = numIndices
+      var vertices = new Float32Array(numVertices * 3)
+      var normals = new Float32Array(numVertices * 3)
+      var colors = new Float32Array(numVertices * 4)
+      var indices = new Uint16Array(numIndices)
+
+      //设置顶点、法线、颜色
+      var index_indices = 0
+      for (var i = 0; i < this.objects.length; i++) {
+        var object = this.objects[i]
+        for (var j = 0; j < object.faces.length; j++) {
+          var face = object.faces[j]
+          var color = this.findColor(face.materialName)
+          var faceNormal = face.normal
+          for (var k = 0; k < face.vIndices.length; k++) {
+            //设置索引
+            indices[index_indices] = index_indices
+            //复制顶点
+            var vIdx = face.vIndices[k]
+            var vertex = this.vertices[vIdx]
+            vertices[index_indices * 3 + 0] = vertex.x
+            vertices[index_indices * 3 + 1] = vertex.y
+            vertices[index_indices * 3 + 2] = vertex.z
+            //复制颜色
+            colors[index_indices * 4 + 0] = color.r
+            colors[index_indices * 4 + 1] = color.g
+            colors[index_indices * 4 + 2] = color.b
+            colors[index_indices * 4 + 3] = color.a
+            //复制法线
+            var nIdx = face.nIndices[k]
+            if (nIdx >= 0) {
+              var normal = this.normals[nIdx]
+              normals[index_indices * 3 + 0] = normal.x
+              normals[index_indices * 3 + 1] = normal.y
+              normals[index_indices * 3 + 2] = normal.z
+            } else {
+              normals[index_indices * 3 + 0] = faceNormal.x
+              normals[index_indices * 3 + 1] = faceNormal.y
+              normals[index_indices * 3 + 2] = faceNormal.z
+            }
+            index_indices++
+          }
+        }
+      }
+
+      return new DrawingInfo(vertices, normals, colors, indices)
+    }
+
+    // MTLDoc对象声明
+    var MTLDoc = function () {
+      this.complete = false // MTL默认未完成解析
+      this.materials = new Array(0)
+    }
+
+    MTLDoc.prototype.parseNewmtl = function (sp) {
+      return sp.getWord() //获取MTL名称
+    }
+
+    MTLDoc.prototype.parseRGB = function (sp, name) {
+      var r = sp.getFloat()
+      var g = sp.getFloat()
+      var b = sp.getFloat()
+      return new Material(name, r, g, b, 1)
+    }
+
+    // Material对象声明
+    var Material = function (name, r, g, b, a) {
+      this.name = name
+      this.color = new Color(r, g, b, a)
+    }
+
+    // Vertex声明
+    var Vertex = function (x, y, z) {
+      this.x = x
+      this.y = y
+      this.z = z
+    }
+
+    // Normal声明
+    var Normal = function (x, y, z) {
+      this.x = x
+      this.y = y
+      this.z = z
+    }
+
+    // Color声明
+    var Color = function (r, g, b, a) {
+      this.r = r
+      this.g = g
+      this.b = b
+      this.a = a
+    }
+
+    // OBJObject声明
+    var OBJObject = function (name) {
+      this.name = name
+      this.faces = new Array(0)
+      this.numIndices = 0
+    }
+
+    OBJObject.prototype.addFace = function (face) {
+      this.faces.push(face)
+      this.numIndices += face.numIndices
+    }
+
+    // Face对象声明
+    var Face = function (materialName) {
+      this.materialName = materialName
+      if (materialName == null) this.materialName = ''
+      this.vIndices = new Array(0)
+      this.nIndices = new Array(0)
+    }
+
+    // DrawInfo对象声明
+    var DrawingInfo = function (vertices, normals, colors, indices) {
+      this.vertices = vertices
+      this.normals = normals
+      this.colors = colors
+      this.indices = indices
+    }
+
+    // StringParser对象构造函数
+    var StringParser = function (str) {
+      this.str //存放字符串化的参数
+      this.index //当前读取的字符的下标
+      this.init(str)
+    }
+    //StringParser对象初始化
+    StringParser.prototype.init = function (str) {
+      this.str = str
+      this.index = 0
+    }
+
+    // 跳过分隔符
+    StringParser.prototype.skipDelimiters = function () {
+      for (var i = this.index, len = this.str.length; i < len; i++) {
+        var c = this.str.charAt(i)
+        if (c == '\t' || c == ' ' || c == '(' || c == ')' || c == '"') continue
+        break
+      }
+      this.index = i
+    }
+
+    //跳到下一个单词
+    StringParser.prototype.skipToNextWord = function () {
+      this.skipDelimiters()
+      var n = getWordLength(this.str, this.index)
+      this.index += n + 1
+    }
+
+    //获取单词
+    StringParser.prototype.getWord = function () {
+      this.skipDelimiters()
+      var n = getWordLength(this.str, this.index)
+      if (n == 0) return null
+      var word = this.str.substr(this.index, n)
+      this.index += n + 1
+
+      return word
+    }
+
+    //获取整数
+    StringParser.prototype.getInt = function () {
+      return parseInt(this.getWord())
+    }
+
+    //获取浮点数
+    StringParser.prototype.getFloat = function () {
+      return parseFloat(this.getWord())
+    }
+
+    //获取单词的长度
+    function getWordLength(str, start) {
+      var n = 0
+      for (var i = start, len = str.length; i < len; i++) {
+        var c = str.charAt(i)
+        if (c == '\t' || c == ' ' || c == '(' || c == ')' || c == '"') break
+      }
+      return i - start
+    }
+
+    function calcNormal(p0, p1, p2) {
+      // 向量v0由p1指向p0, v1; 向量v1由p1指向p2,
+      var v0 = new Float32Array(3)
+      var v1 = new Float32Array(3)
+      for (var i = 0; i < 3; i++) {
+        v0[i] = p0[i] - p1[i]
+        v1[i] = p2[i] - p1[i]
+      }
+
+      //计算向量v0、v1的叉乘
+      var c = new Float32Array(3)
+      c[0] = v0[1] * v1[2] - v0[2] * v1[1]
+      c[1] = v0[2] * v1[0] - v0[0] * v1[2]
+      c[2] = v0[0] * v1[1] - v0[1] * v1[0]
+
+      //叉乘结果归一化
+      var v = new Vector3(c)
+      v.normalize()
+      return v.elements
+    }
+
+    init()
+  </script>
+</body>
+
+</html>
