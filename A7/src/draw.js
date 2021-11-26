@@ -243,7 +243,7 @@ window.onload = function () {
         const surfacebuffer = initOneBezierSurface(Program, p, 3, 3, color1, 0.19);
 
         //载入obj模型
-        LoadObjFile(Program.gl, '../obj/free_car_001.obj', objbuffers, 0.3, false, 0);
+        LoadObjFile(Program.gl, './obj/free_car_001.obj', objbuffers, 0.3, false, 0);
 
         Program.gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black, fully opaque
         Program.gl.clearDepth(1.0);                 // Clear everything
